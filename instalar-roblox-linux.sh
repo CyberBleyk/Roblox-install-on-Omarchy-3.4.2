@@ -1,142 +1,171 @@
-#!/bin/bash
-# ============================================================
-# Roblox en Linux (Arch/Omarchy) via Sober — v2.0
-# AMD Ryzen + Radeon Vega Integrada + Wayland/Hyprland
-# Fix incluido: SDL_INIT_VIDEO / WAYLAND_DISPLAY propagation
-# ============================================================
+#!/usr/bin/env bash
 
 set -e
 
-# ── Colores ──────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+echo "== Roblox Linux Installer v4.0 (Universal) =="
 
-ok()   { echo -e "${GREEN}  ✓ $1${NC}"; }
-info() { echo -e "${CYAN}  → $1${NC}"; }
-warn() { echo -e "${YELLOW}  ⚠ $1${NC}"; }
-err()  { echo -e "${RED}  ✗ $1${NC}"; exit 1; }
-
-echo ""
-echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║   Instalador de Roblox para Linux  v2.0     ║${NC}"
-echo -e "${CYAN}║   Sober + Flatpak + AMD Vega + Hyprland     ║${NC}"
-echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
-echo ""
-
-# ── Detectar WAYLAND_DISPLAY real ───────────────────────────
-WDISPLAY="${WAYLAND_DISPLAY:-}"
-if [ -z "$WDISPLAY" ]; then
-    # Intentar detectar automáticamente
-    for candidate in wayland-0 wayland-1; do
-        if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$candidate" ]; then
-            WDISPLAY="$candidate"
-            break
-        fi
-    done
-fi
-
-if [ -z "$WDISPLAY" ]; then
-    warn "No se pudo detectar WAYLAND_DISPLAY automáticamente."
-    warn "Asegúrate de correr este script DENTRO de tu sesión Hyprland."
-    warn "Usando 'wayland-1' como valor por defecto..."
-    WDISPLAY="wayland-1"
+# -------------------------------
+# Detectar distro
+# -------------------------------
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    DISTRO=$ID
 else
-    ok "WAYLAND_DISPLAY detectado: $WDISPLAY"
+    echo "[ERROR] No se pudo detectar la distro"
+    exit 1
 fi
 
-# ── 1. Flatpak ───────────────────────────────────────────────
-echo ""
-echo "[1/6] Verificando Flatpak..."
-if ! command -v flatpak &>/dev/null; then
-    info "Instalando Flatpak..."
-    sudo pacman -S --noconfirm flatpak
+echo "[INFO] Distro detectada: $DISTRO"
+
+# -------------------------------
+# Detectar desktop
+# -------------------------------
+DESKTOP=${XDG_CURRENT_DESKTOP:-unknown}
+
+if [[ "$DESKTOP" == *"Hyprland"* ]]; then
+    PORTAL="xdg-desktop-portal-gtk"
+    DESKTOP_ENV="Hyprland"
+elif [[ "$DESKTOP" == *"KDE"* ]]; then
+    PORTAL="xdg-desktop-portal-kde"
+    DESKTOP_ENV="KDE"
+elif [[ "$DESKTOP" == *"GNOME"* ]]; then
+    PORTAL="xdg-desktop-portal-gnome"
+    DESKTOP_ENV="GNOME"
 else
-    ok "Flatpak ya instalado"
+    PORTAL="xdg-desktop-portal-gtk"
+    DESKTOP_ENV="Unknown"
 fi
 
-# ── 2. Flathub ──────────────────────────────────────────────
-echo "[2/6] Agregando repositorio Flathub..."
-flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-ok "Flathub listo"
+echo "[INFO] Desktop: $DESKTOP_ENV"
 
-# ── 3. Portal GTK (requerido por Hyprland para file picker) ─
-echo "[3/6] Instalando xdg-desktop-portal-gtk..."
-if ! pacman -Qi xdg-desktop-portal-gtk &>/dev/null; then
-    sudo pacman -S --noconfirm xdg-desktop-portal-gtk
-    ok "xdg-desktop-portal-gtk instalado"
-else
-    ok "xdg-desktop-portal-gtk ya instalado"
-fi
+# -------------------------------
+# Instalar dependencias por distro
+# -------------------------------
+install_deps() {
+    case "$DISTRO" in
+        arch|manjaro|endeavouros)
+            sudo pacman -Sy --noconfirm flatpak $PORTAL
+            ;;
+        ubuntu|debian|kali)
+            sudo apt update
+            sudo apt install -y flatpak $PORTAL
+            ;;
+        fedora)
+            sudo dnf install -y flatpak $PORTAL
+            ;;
+        nixos)
+            echo "[WARN] NixOS detectado"
+            echo "Agrega esto a configuration.nix:"
+            echo "services.flatpak.enable = true;"
+            echo "xdg.portal.enable = true;"
+            echo "xdg.portal.extraPortals = [ pkgs.$PORTAL ];"
+            exit 1
+            ;;
+        *)
+            echo "[ERROR] Distro no soportada aún"
+            exit 1
+            ;;
+    esac
+}
 
-# ── 4. Sober (Roblox) ───────────────────────────────────────
-echo "[4/6] Instalando Sober (cliente Roblox para Linux)..."
+install_deps
+
+# -------------------------------
+# Flatpak config
+# -------------------------------
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+# -------------------------------
+# Instalar Sober
+# -------------------------------
 flatpak install -y flathub org.vinegarhq.Sober
-ok "Sober instalado"
 
-# ── 5. Override Flatpak con variables correctas ─────────────
-echo "[5/6] Configurando variables Wayland/AMD para Flatpak..."
+# -------------------------------
+# Detectar Wayland
+# -------------------------------
+WAYLAND_DISPLAY=$(ls "$XDG_RUNTIME_DIR" | grep wayland | head -n1)
 
-OVERRIDE_DIR="$HOME/.local/share/flatpak/overrides"
-mkdir -p "$OVERRIDE_DIR"
+if [[ -z "$WAYLAND_DISPLAY" ]]; then
+    echo "[WARN] Wayland no detectado, usando fallback X11"
+    WAYLAND_DISPLAY=""
+fi
 
-cat > "$OVERRIDE_DIR/org.vinegarhq.Sober" << OVERRIDE
+# -------------------------------
+# Detectar GPU
+# -------------------------------
+GPU_INFO=$(lspci 2>/dev/null | grep -E "VGA|3D" || true)
+
+if echo "$GPU_INFO" | grep -qi amd; then
+    GPU="AMD"
+elif echo "$GPU_INFO" | grep -qi nvidia; then
+    GPU="NVIDIA"
+elif echo "$GPU_INFO" | grep -qi intel; then
+    GPU="INTEL"
+else
+    GPU="UNKNOWN"
+fi
+
+echo "[INFO] GPU: $GPU"
+
+# -------------------------------
+# Variables entorno
+# -------------------------------
+ENV_VARS="XDG_CURRENT_DESKTOP=$DESKTOP_ENV
+XDG_SESSION_TYPE=wayland
+SDL_VIDEODRIVER=wayland
+GDK_SCALE=1
+GDK_DPI_SCALE=1
+SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS=0
+MESA_GL_VERSION_OVERRIDE=4.6"
+
+if [[ -n "$WAYLAND_DISPLAY" ]]; then
+    ENV_VARS="WAYLAND_DISPLAY=$WAYLAND_DISPLAY
+$ENV_VARS"
+fi
+
+if [[ "$GPU" == "NVIDIA" ]]; then
+    ENV_VARS="$ENV_VARS
+__GLX_VENDOR_LIBRARY_NAME=nvidia"
+fi
+
+# -------------------------------
+# Override
+# -------------------------------
+OVERRIDE_FILE="$HOME/.local/share/flatpak/overrides/org.vinegarhq.Sober"
+mkdir -p "$(dirname "$OVERRIDE_FILE")"
+
+cat > "$OVERRIDE_FILE" <<EOF
 [Context]
 sockets=wayland;fallback-x11;
 
 [Environment]
-WAYLAND_DISPLAY=$WDISPLAY
-XDG_CURRENT_DESKTOP=Hyprland
-XDG_SESSION_TYPE=wayland
-MESA_GL_VERSION_OVERRIDE=4.6
-OVERRIDE
+$ENV_VARS
+EOF
 
-# Permiso de input (necesario para teclado/mouse dentro del juego)
+echo "[OK] Override aplicado"
+
+# -------------------------------
+# Permisos
+# -------------------------------
 flatpak override --user \
     --filesystem=xdg-run/app/com.discordapp.Discord:create \
     --filesystem=xdg-run/discord-ipc-0 \
     --device=input \
     org.vinegarhq.Sober
 
-ok "Variables AMD/Wayland configuradas (WAYLAND_DISPLAY=$WDISPLAY)"
+# -------------------------------
+# Desktop entry
+# -------------------------------
+mkdir -p ~/.local/share/applications
 
-# ── 6. Lanzador de escritorio ────────────────────────────────
-echo "[6/6] Creando acceso directo..."
-
-mkdir -p "$HOME/.local/share/applications"
-cat > "$HOME/.local/share/applications/roblox-sober.desktop" << 'DESKTOP'
+cat > ~/.local/share/applications/roblox-sober.desktop <<EOF
 [Desktop Entry]
 Name=Roblox (Sober)
-Comment=Roblox via Sober en Linux
 Exec=flatpak run org.vinegarhq.Sober
-Icon=org.vinegarhq.Sober
-Terminal=false
 Type=Application
 Categories=Game;
-DESKTOP
+EOF
 
-ok "Acceso directo creado"
-
-# ── Matar procesos zombie por si acaso ───────────────────────
-flatpak kill org.vinegarhq.Sober 2>/dev/null || true
-
-# ── Listo ────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         ¡Instalación completa! v2.0         ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════╝${NC}"
-echo ""
-echo "Para jugar Roblox corre:"
-echo ""
-echo -e "   ${CYAN}flatpak run org.vinegarhq.Sober${NC}"
-echo ""
-echo "O búscalo en tu menú como 'Roblox (Sober)'"
-echo ""
-echo -e "${YELLOW}NOTA: La primera vez descarga el APK de Roblox (~150MB),${NC}"
-echo -e "${YELLOW}espera unos minutos. Necesitas internet estable.${NC}"
-echo ""
-echo -e "${YELLOW}Si hay problemas de DNS (el APK no descarga):${NC}"
-echo -e "   sudo sh -c 'echo nameserver 1.1.1.1 > /etc/resolv.conf'"
-echo ""
+echo "✅ Instalación completada en $DISTRO"
+echo "Ejecuta: flatpak run org.vinegarhq.Sober"
