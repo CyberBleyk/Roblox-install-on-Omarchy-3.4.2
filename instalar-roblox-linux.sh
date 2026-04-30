@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ================================================================
-#  Roblox en Linux via Sober — v4.0 STABLE
+#  Roblox en Linux via Sober — v4.0 STABLEE
 #  Multi-distro | Smart GPU | Wayland/X11 Fallback | Self-healing
 #
 #  Uso:
