@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ================================================================
-#  Roblox en Linux via Sober — v4.0 STABLEE
+#  Roblox en Linux via Sober — v4.0 STABLE
 #  Multi-distro | Smart GPU | Wayland/X11 Fallback | Self-healing
 #
 #  Uso:
@@ -37,7 +37,7 @@ step()  { echo -e "\n${BOLD}${CYAN}── $1 ──${NC}"; }
 
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║        Roblox Linux Installer  v4.0  STABLE         ║${NC}"
+echo -e "${CYAN}║        Roblox Linux Installer  v4.1  STABLE         ║${NC}"
 echo -e "${CYAN}║   Multi-distro · Smart GPU · Wayland/X11 Fallback   ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════╝${NC}"
 [[ $DEBUG -eq 1 ]] && echo -e "  ${YELLOW}[MODO DEBUG ACTIVO] Log: $LOG_FILE${NC}"
@@ -165,23 +165,42 @@ flatpak uninstall --unused -y 2>/dev/null || true
 ok "Flatpak y Flathub listos"
 
 # ================================================================
-# 7. RUNTIME GL EXPLÍCITO (previene eglCreateContext failed)
+# 7. RUNTIME GL + VULKAN COMPLETO (previene eglCreateContext + vkCreateInstance NULL)
 # ================================================================
-step "7/10  Instalando runtime GL"
+step "7/10  Instalando runtime GL + Vulkan"
 
 RUNTIME_VER=""
-for v in 24.08 23.08; do
-    if flatpak remote-info flathub "org.freedesktop.Platform//$v" &>/dev/null 2>&1; then
-        RUNTIME_VER="$v"; break
-    fi
-done
+
+# Método 1: detectar desde Sober ya instalado
+SOBER_RUNTIME=$(flatpak info org.vinegarhq.Sober 2>/dev/null | grep -i "runtime" | awk '{print $NF}' | grep -oP '[0-9]+\.[0-9]+' | head -1 || true)
+[[ -n "$SOBER_RUNTIME" ]] && RUNTIME_VER="$SOBER_RUNTIME" && debug "Runtime de Sober: $RUNTIME_VER"
+
+# Método 2: probar versiones en Flathub
+if [ -z "$RUNTIME_VER" ]; then
+    for v in 24.08 23.08; do
+        if flatpak remote-info flathub "org.freedesktop.Platform//$v" &>/dev/null 2>&1; then
+            RUNTIME_VER="$v"; break
+        fi
+    done
+fi
 
 if [ -n "$RUNTIME_VER" ]; then
-    flatpak install -y flathub "org.freedesktop.Platform//$RUNTIME_VER"           2>/dev/null || true
-    flatpak install -y flathub "org.freedesktop.Platform.GL.default//$RUNTIME_VER" 2>/dev/null || true
-    ok "Runtime GL $RUNTIME_VER instalado"
+    info "Instalando extensiones runtime $RUNTIME_VER (GL + GL32 + Vulkan)..."
+
+    # Runtime base
+    flatpak install -y flathub "org.freedesktop.Platform//$RUNTIME_VER"              2>/dev/null || true
+    # GL Mesa — crítico para EGL
+    flatpak install -y flathub "org.freedesktop.Platform.GL.default//$RUNTIME_VER"   2>/dev/null || true
+    # GL32 — Roblox necesita libs 32-bit internamente
+    flatpak install -y flathub "org.freedesktop.Platform.GL32.default//$RUNTIME_VER" 2>/dev/null || true
+    # Compat i386 — dependencia de GL32
+    flatpak install -y flathub "org.freedesktop.Platform.Compat.i386//$RUNTIME_VER"  2>/dev/null || true
+
+    ok "Runtime GL + Vulkan $RUNTIME_VER instalado"
 else
-    warn "Runtime no verificado remotamente — Sober lo gestionará al primer inicio"
+    warn "No se detectó versión de runtime — Sober intentará resolverlo automáticamente"
+    warn "Si aparece eglCreateContext, corre manualmente:"
+    warn "  flatpak install flathub org.freedesktop.Platform.GL.default//24.08"
 fi
 
 # ================================================================
@@ -309,9 +328,9 @@ printf "  %-18s %s\n" "OpenGL:"     "$([[ $GL_OK -eq 1 ]] && echo 'Verificado �
 printf "  %-18s %s\n" "Log:"        "$LOG_FILE"
 echo -e "${CYAN}═════════════════════════════════════════════${NC}"
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║            ✅  Instalación completa              ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║            ✅  Instalación completa v4.0             ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  ${BOLD}Lanza Roblox:${NC}"
 echo -e "     ${CYAN}flatpak run org.vinegarhq.Sober${NC}"
